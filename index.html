@@ -268,46 +268,81 @@ async function iniciarCamara() {
   resultados = leer("resultadosCam", []);
   pintarUltimo($("panelUltimoCam"), resultados[0]);
   pintarCajas();
+  abrirSala(); // la sala se abre ya, sin esperar a la cámara
   try {
     streamCam = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 960}}, audio: false});
     $("video").srcObject = streamCam;
-    await $("video").play().catch(() => {});
+    $("video").play().catch(() => {});
     $("avisoCamara").hidden = true;
     estadoCam("Cámara lista", "ok");
-    try { await navigator.wakeLock?.request("screen"); } catch (e) {}
+    mantenerPantallaPrendida();
+    // monitores que se conectaron antes de que la cámara estuviera lista
+    for (const id of monitores.keys()) peerCam?.call(id, streamCam);
     bucleDeteccion();
   } catch (e) {
     $("avisoCamara").textContent = "No se pudo usar la cámara. Revisá que el navegador tenga permiso de cámara para esta página y recargá.";
     estadoCam("Sin cámara", "mal");
   }
-  abrirSala();
+}
+async function mantenerPantallaPrendida() {
+  try { await navigator.wakeLock?.request("screen"); } catch (e) {}
 }
 
 // ---- sala (conexión directa con los monitores)
 function nuevoCodigo() { let c = ""; for (let i = 0; i < 6; i++) c += LETRAS[Math.floor(Math.random() * LETRAS.length)]; return c; }
+let intentosMismoCodigo = 0;
 function abrirSala() {
   let codigo = leer("sala", null) || nuevoCodigo();
   guardar("sala", codigo);
   $("txtSala").textContent = codigo;
   $("inEnlace").value = `${location.origin}${location.pathname}?sala=${codigo}`;
-  peerCam = new Peer(PREFIJO + codigo);
-  peerCam.on("open", () => actualizarSala());
-  peerCam.on("disconnected", () => { $("textoSala").textContent = "Reconectando…"; setTimeout(() => peerCam.reconnect(), 2000); });
-  peerCam.on("error", e => {
-    if (e.type === "unavailable-id") { guardar("sala", null); peerCam.destroy(); abrirSala(); return; }
-    $("textoSala").textContent = "Problema de conexión: " + e.type; $("puntoSala").className = "punto mal";
+  const peer = peerCam = new Peer(PREFIJO + codigo);
+  peer.on("open", () => { intentosMismoCodigo = 0; actualizarSala(); });
+  peer.on("disconnected", () => {
+    if (peer !== peerCam || peer.destroyed) return;
+    $("textoSala").textContent = "Reconectando…"; $("puntoSala").className = "punto trabajando";
+    setTimeout(() => { if (!peer.destroyed) peer.reconnect(); }, 2000);
   });
-  peerCam.on("connection", conn => {
+  peer.on("error", e => {
+    if (peer !== peerCam) return;
+    if (e.type === "unavailable-id") {
+      // Si el celular cortó la página de golpe, el servidor tarda en liberar el código.
+      // Se reintenta con el MISMO código un rato, así el monitor no queda buscando uno viejo.
+      peer.destroy();
+      if (++intentosMismoCodigo > 12) { guardar("sala", null); intentosMismoCodigo = 0; abrirSala(); return; }
+      $("textoSala").textContent = "Recuperando la sala…"; $("puntoSala").className = "punto trabajando";
+      setTimeout(abrirSala, 5000);
+      return;
+    }
+    if (e.type === "peer-unavailable") return; // un monitor que ya no está
+    $("textoSala").textContent = "Problema de conexión (" + e.type + "). Reintento…"; $("puntoSala").className = "punto mal";
+    if (["network", "server-error", "socket-error", "socket-closed"].includes(e.type)) {
+      peer.destroy(); setTimeout(abrirSala, 4000);
+    }
+  });
+  peer.on("connection", conn => {
     conn.on("open", () => {
       monitores.set(conn.peer, conn);
       conn.send({tipo: "historial", lista: resultados.slice(0, 50), config});
-      if (streamCam) peerCam.call(conn.peer, streamCam);
+      if (streamCam) peer.call(conn.peer, streamCam);
       actualizarSala();
     });
     conn.on("close", () => { monitores.delete(conn.peer); actualizarSala(); });
     conn.on("error", () => { monitores.delete(conn.peer); actualizarSala(); });
   });
 }
+// Al volver a la página (pantalla apagada, otra app): pantalla prendida y sala reconectada
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if ($("modoCamara").hidden === false && peerCam) {
+    mantenerPantallaPrendida();
+    if (peerCam.destroyed) abrirSala();
+    else if (peerCam.disconnected) peerCam.reconnect();
+  }
+  if ($("modoMonitor").hidden === false && salaMon && !connMon?.open) {
+    clearTimeout(reintento); reintento = null; conectar(salaMon);
+  }
+});
 function actualizarSala() {
   const n = monitores.size;
   $("textoSala").textContent = n ? `${n} monitor${n > 1 ? "es" : ""} conectado${n > 1 ? "s" : ""}` : "Sala abierta, esperando monitor";
@@ -443,16 +478,16 @@ $("btnConectar").onclick = () => {
 };
 $("inSala").addEventListener("keydown", e => { if (e.key === "Enter") $("btnConectar").click(); });
 
-// Reintentos: como mucho uno agendado a la vez, y se rinde después de varios fallos seguidos
-const MAX_FALLOS = 5;
+// Reintentos: como mucho uno agendado a la vez y sin rendirse nunca
+// (la cámara puede abrirse minutos después que el monitor)
 let reintento = null, fallos = 0, intento = 0;
 function programarReintento(ms) {
   if (reintento) return;
-  if (++fallos >= MAX_FALLOS) {
-    estadoMon(`No encuentro la cámara ${salaMon}. Abrí la cámara en el otro celular y escribí el código que muestra.`, "mal");
-    return;
+  fallos++;
+  if (fallos >= 4) {
+    estadoMon(`Sigo buscando la cámara ${salaMon}… Si en el celular aparece otro código, escribilo arriba y tocá Conectar.`, "mal");
   }
-  reintento = setTimeout(() => { reintento = null; conectar(salaMon); }, ms);
+  reintento = setTimeout(() => { reintento = null; conectar(salaMon); }, fallos >= 4 ? 6000 : ms);
 }
 function sinVideo(texto) {
   $("avisoRemoto").textContent = texto; $("avisoRemoto").hidden = false;
