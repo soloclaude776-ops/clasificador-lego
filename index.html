@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Clasificador LEGO</title>
+<meta name="theme-color" content="#e3000b">
+<style>
+/* Layout: una sola columna en el celular, dos en pantallas anchas. Rojo LEGO para acciones, amarillo para la caja. */
+:root{
+  --bg:#f3f4f7; --panel:#fff; --text:#1b1d22; --muted:#666c7c; --line:#e0e3ea;
+  --accent:#e3000b; --accent-ink:#fff; --ok:#1f9d55; --warn:#c77d00; --caja:#ffd500; --caja-ink:#1b1d22;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#111318; --panel:#1b1e25; --text:#eceef3; --muted:#9ba1b2; --line:#2b2f3a; --caja-ink:#111318; color-scheme:dark}
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:18px;margin:0 auto 0 0;display:flex;align-items:center;gap:9px}
+.ladrillo{width:22px;height:14px;background:var(--accent);border-radius:2px;position:relative;flex:none}
+.ladrillo:before,.ladrillo:after{content:"";position:absolute;top:-4px;width:6px;height:4px;background:var(--accent);border-radius:1px}
+.ladrillo:before{left:3px}.ladrillo:after{right:3px}
+button,select,input{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--panel);padding:9px 13px;border-radius:9px;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--caja);outline-offset:2px}
+button.primario{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.activo{background:var(--ok);color:#fff;border-color:var(--ok)}
+input{border:1px solid var(--line);background:var(--bg);padding:8px 10px;border-radius:9px;min-width:0}
+main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;padding:16px;max-width:1300px;margin:0 auto}
+@media (max-width:820px){main{grid-template-columns:minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
+.panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.vista{position:relative;background:#000;border-radius:9px;overflow:hidden;aspect-ratio:4/3;max-width:100%}
+.vista video{width:100%;height:100%;object-fit:contain;display:block}
+.vista .aviso{position:absolute;inset:0;display:grid;place-items:center;color:#fff;text-align:center;padding:20px;background:rgba(0,0,0,.65)}
+.estado{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:14px}
+.punto{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+.punto.ok{background:var(--ok)}.punto.mal{background:var(--accent)}.punto.trabajando{background:var(--warn)}
+.controles{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.ayuda{color:var(--muted);font-size:13px;margin:8px 0 0}
+.ultimo{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center}
+.numCaja{width:140px;height:140px;border-radius:14px;background:var(--caja);color:var(--caja-ink);display:grid;place-items:center;text-align:center}
+.numCaja small{display:block;font-size:13px;font-weight:700;letter-spacing:.12em}
+.numCaja b{display:block;font-size:80px;line-height:1;font-variant-numeric:tabular-nums}
+@media (max-width:420px){.numCaja{width:104px;height:104px}.numCaja b{font-size:58px}}
+.nombre{font-size:21px;font-weight:700;overflow-wrap:anywhere}
+.detalle{color:var(--muted);overflow-wrap:anywhere}
+.ultimo img{width:90px;height:68px;object-fit:contain;background:#fff;border-radius:6px;margin-top:8px}
+.dudosa{display:inline-block;background:var(--warn);color:#fff;font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px;vertical-align:middle}
+.conteo{display:flex;gap:8px;flex-wrap:wrap}
+.conteo div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 10px;text-align:center;min-width:70px}
+.conteo b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.conteo span{font-size:12px;color:var(--muted)}
+.tabla{max-height:380px;overflow:auto}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+th{color:var(--muted);font-weight:600}
+.tabla img{width:44px;height:33px;object-fit:contain;background:#fff;border-radius:4px}
+.cajita{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:6px;background:var(--caja);color:var(--caja-ink);font-weight:800}
+.sala{font:700 34px/1 ui-monospace,Consolas,monospace;letter-spacing:.15em}
+.enlace{display:flex;gap:8px;margin-top:8px}
+.enlace input{flex:1}
+.fila{display:flex;gap:8px;align-items:center;margin:6px 0}
+.fila input[type=number]{width:72px}
+.fila input[type=text]{flex:1}
+/* inicio */
+#inicio{max-width:640px;margin:0 auto;padding:28px 16px;display:flex;flex-direction:column;gap:16px}
+#inicio h2{font-size:26px;margin:0;text-wrap:balance}
+.opciones{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:480px){.opciones{grid-template-columns:1fr}}
+.opcion{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:18px;border-radius:12px;background:var(--panel)}
+.opcion b{font-size:19px}
+.opcion span{color:var(--muted);font-size:14px}
+.opcion .icono{font-size:30px}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:no-preference){.numCaja.nuevo{animation:salto .4s ease-out}}
+@keyframes salto{0%{transform:scale(.85)}60%{transform:scale(1.06)}100%{transform:scale(1)}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="ladrillo"></span>Clasificador LEGO</h1>
+  <span id="etiquetaModo" class="ayuda" style="margin:0"></span>
+  <button id="btnVoz" hidden>🔊 Voz</button>
+  <button id="btnCambiar" hidden>Cambiar modo</button>
+</header>
+
+<!-- ============================== INICIO -->
+<section id="inicio">
+  <h2>¿Qué hace este dispositivo?</h2>
+  <div class="opciones">
+    <button class="opcion" id="elegirCamara"><span class="icono">📷</span><b>Cámara</b><span>El celular que mira la cinta. Reconoce cada pieza.</span></button>
+    <button class="opcion" id="elegirMonitor"><span class="icono">🖥</span><b>Monitor</b><span>Otro celular, tablet o PC. Muestra el video, la caja y lo dice en voz alta.</span></button>
+  </div>
+  <p class="ayuda">Los dos dispositivos necesitan internet. El reconocimiento lo hace Brickognize, gratis.</p>
+</section>
+
+<!-- ============================== CÁMARA -->
+<main id="modoCamara" hidden>
+  <div class="col">
+    <section class="panel">
+      <h2>Cámara</h2>
+      <div class="vista"><video id="video" playsinline muted autoplay></video><div class="aviso" id="avisoCamara">Pidiendo permiso para usar la cámara…</div></div>
+      <div class="estado"><span class="punto" id="puntoCam"></span><span id="textoCam">Esperando</span></div>
+      <div class="controles">
+        <button class="primario" id="btnEscanear">📷 Escanear ahora</button>
+        <button id="btnAuto">Automático: apagado</button>
+        <button id="btnFondo">Tomar fondo vacío</button>
+      </div>
+      <p class="ayuda">Automático: escanea solo cuando aparece una pieza nueva. Primero tocá <b>Tomar fondo vacío</b> con la cinta sin piezas.</p>
+    </section>
+    <section class="panel">
+      <h2>Conectar el monitor</h2>
+      <div>Código de sala: <span class="sala" id="txtSala">······</span></div>
+      <p class="ayuda">En el otro dispositivo abrí este enlace (o abrí la página, elegí Monitor y escribí el código):</p>
+      <div class="enlace"><input id="inEnlace" type="text" readonly aria-label="Enlace del monitor"><button id="btnCopiar">Copiar</button></div>
+      <div class="estado"><span class="punto" id="puntoSala"></span><span id="textoSala">Conectando…</span></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="panel" id="panelUltimoCam"></section>
+    <section class="panel">
+      <h2>Cajas <button id="btnGuardarCajas" style="font-size:13px;padding:4px 10px">Guardar</button></h2>
+      <p class="ayuda" style="margin-top:0">Si la categoría o el nombre de la pieza contiene el texto, va a esa caja. Se revisa de arriba hacia abajo. Categorías comunes: Brick, Plate, Tile, Slope, Technic, Minifig, Wheel, Hinge, Round.</p>
+      <div id="filasCajas"></div>
+      <div class="fila"><button id="btnAgregarFila">+ Agregar regla</button></div>
+      <div class="fila">Todo lo demás va a la caja <input id="inOtros" type="number" min="0"></div>
+    </section>
+  </div>
+</main>
+
+<!-- ============================== MONITOR -->
+<main id="modoMonitor" hidden>
+  <div class="col">
+    <section class="panel" id="panelConectar">
+      <h2>Conectar con la cámara</h2>
+      <div class="fila"><input id="inSala" type="text" placeholder="Código de sala (ej: K7P2QX)" maxlength="6" style="text-transform:uppercase" autocomplete="off"><button class="primario" id="btnConectar">Conectar</button></div>
+      <div class="estado"><span class="punto" id="puntoMon"></span><span id="textoMon">Escribí el código que aparece en la cámara</span></div>
+    </section>
+    <section class="panel">
+      <h2>En vivo</h2>
+      <div class="vista"><video id="videoRemoto" playsinline muted autoplay></video><div class="aviso" id="avisoRemoto">Sin video todavía</div></div>
+    </section>
+    <section class="panel">
+      <h2>Piezas por caja</h2>
+      <div class="conteo" id="conteo"></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="panel" id="panelUltimoMon"></section>
+    <section class="panel">
+      <h2>Historial <button id="btnBorrar" style="font-size:13px;padding:4px 10px">Borrar</button></h2>
+      <div class="tabla"><table><thead><tr><th></th><th>Pieza</th><th>Color</th><th>Caja</th></tr></thead><tbody id="tablaHist"></tbody></table></div>
+      <div class="fila" id="confirmarBorrar" hidden><span>¿Borrar todo el historial?</span><button id="btnSiBorrar" class="primario">Sí, borrar</button><button id="btnNoBorrar">No</button></div>
+    </section>
+  </div>
+</main>
+
+<template id="tplUltimo">
+  <h2>Última pieza</h2>
+  <div class="ultimo">
+    <div class="numCaja"><div><small>CAJA</small><b class="txtCaja">–</b></div></div>
+    <div><div class="nombre">Todavía no hay piezas</div><div class="detalle">Poné una pieza frente a la cámara</div><img alt="" hidden></div>
+  </div>
+</template>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const API_BRICKOGNIZE = "https://api.brickognize.com/predict/parts/?predict_color=true&top_k_items=3";
+const UMBRAL_DUDOSA = 0.5;
+const PREFIJO = "clasificador-lego-";
+const LETRAS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const CAJAS_POR_DEFECTO = [
+  {texto: "Technic", caja: 5}, {texto: "Minifig", caja: 6}, {texto: "Slope", caja: 4},
+  {texto: "Tile", caja: 3}, {texto: "Plate", caja: 2}, {texto: "Brick", caja: 1},
+];
+const $ = id => document.getElementById(id);
+const espera = ms => new Promise(r => setTimeout(r, ms));
+
+function leer(clave, porDefecto) { try { const v = localStorage.getItem(clave); return v === null ? porDefecto : JSON.parse(v); } catch (e) { return porDefecto; } }
+function guardar(clave, valor) { try { localStorage.setItem(clave, JSON.stringify(valor)); } catch (e) {} }
+
+let voz = leer("voz", true);
+let config = leer("config", {cajas: CAJAS_POR_DEFECTO, caja_otros: 7});
+let resultados = [];
+
+// ---------------------------------------------------------------- voz en español
+const PALABRAS = {
+  Brick: "ladrillo", Plate: "placa", Tile: "teja lisa", Slope: "inclinada", Technic: "técnic", Minifig: "minifigura",
+  Round: "redonda", Wedge: "cuña", Hinge: "bisagra", Wheel: "rueda", Tyre: "neumático", Tire: "neumático", Axle: "eje",
+  Pin: "perno", Beam: "viga", Gear: "engranaje", Modified: "modificada", Inverted: "invertida", Arch: "arco",
+  Bracket: "escuadra", Door: "puerta", Window: "ventana", Panel: "panel", Cone: "cono", Bar: "barra", Clip: "clip",
+  Corner: "esquina", with: "con", Head: "cabeza", Torso: "torso", Legs: "piernas", Hair: "pelo", Hat: "sombrero",
+};
+const aEspanol = t => t.replace(/\b[A-Za-z]+\b/g, p => PALABRAS[p] || p).replace(/ x /g, " por ");
+function decir(texto) {
+  if (!voz || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(texto);
+  u.lang = "es-ES";
+  const v = speechSynthesis.getVoices().find(v => v.lang.startsWith("es"));
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+$("btnVoz").onclick = () => {
+  voz = !voz; guardar("voz", voz);
+  $("btnVoz").textContent = voz ? "🔊 Voz" : "🔇 Voz";
+  if (voz) decir("Voz activada");
+};
+
+// ---------------------------------------------------------------- tarjeta "última pieza"
+function crearUltimo(panel) { panel.append($("tplUltimo").content.cloneNode(true)); }
+function pintarUltimo(panel, u) {
+  const caja = panel.querySelector(".txtCaja"), nombre = panel.querySelector(".nombre"),
+        detalle = panel.querySelector(".detalle"), img = panel.querySelector("img");
+  if (!u) { caja.textContent = "–"; nombre.textContent = "Todavía no hay piezas"; detalle.textContent = "Poné una pieza frente a la cámara"; img.hidden = true; return; }
+  if (!u.id) { caja.textContent = "?"; nombre.textContent = "No se reconoció"; detalle.textContent = "Probá girar la pieza o mejorar la luz"; img.hidden = true; }
+  else {
+    caja.textContent = u.caja;
+    nombre.textContent = aEspanol(u.nombre);
+    if (u.score < UMBRAL_DUDOSA) { const b = document.createElement("span"); b.className = "dudosa"; b.textContent = "DUDOSA"; nombre.append(b); }
+    detalle.textContent = `Pieza ${u.id} · ${u.color || "color ?"} · ${Math.round(u.score * 100)}% seguro · ${u.categoria}`;
+    img.src = u.img; img.hidden = false;
+  }
+  const n = panel.querySelector(".numCaja"); n.classList.remove("nuevo"); void n.offsetWidth; n.classList.add("nuevo");
+}
+const fraseDe = u => u.id ? `Caja ${u.caja}. ${aEspanol(u.nombre)}` : "No la reconocí";
+
+// ---------------------------------------------------------------- modos
+function mostrarModo(modo) {
+  $("inicio").hidden = modo !== "inicio";
+  $("modoCamara").hidden = modo !== "camara";
+  $("modoMonitor").hidden = modo !== "monitor";
+  $("btnVoz").hidden = $("btnCambiar").hidden = modo === "inicio";
+  $("btnVoz").textContent = voz ? "🔊 Voz" : "🔇 Voz";
+  $("etiquetaModo").textContent = {camara: "Modo cámara", monitor: "Modo monitor", inicio: ""}[modo];
+}
+$("btnCambiar").onclick = () => { guardar("modo", null); location.href = location.pathname; };
+$("elegirCamara").onclick = () => { guardar("modo", "camara"); iniciarCamara(); };
+$("elegirMonitor").onclick = () => { guardar("modo", "monitor"); iniciarMonitor(); };
+
+// ================================================================ CÁMARA
+let auto = false, escaneando = false, fondo = null, cuadroAnterior = null;
+let cuadrosQuietos = 0, piezaYaEscaneada = false, cuadrosConPieza = 0;
+let streamCam = null, peerCam = null;
+const monitores = new Map(); // conexiones de datos abiertas
+
+function estadoCam(texto, tipo = "") { $("textoCam").textContent = texto; $("puntoCam").className = "punto " + tipo; }
+
+function cajaPara(p) {
+  const donde = `${p.categoria} ${p.nombre}`.toLowerCase();
+  const regla = config.cajas.find(c => c.texto && donde.includes(c.texto.toLowerCase()));
+  return regla ? regla.caja : config.caja_otros;
+}
+
+async function iniciarCamara() {
+  mostrarModo("camara");
+  crearUltimo($("panelUltimoCam"));
+  resultados = leer("resultadosCam", []);
+  pintarUltimo($("panelUltimoCam"), resultados[0]);
+  pintarCajas();
+  try {
+    streamCam = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 960}}, audio: false});
+    $("video").srcObject = streamCam;
+    await $("video").play().catch(() => {});
+    $("avisoCamara").hidden = true;
+    estadoCam("Cámara lista", "ok");
+    try { await navigator.wakeLock?.request("screen"); } catch (e) {}
+    bucleDeteccion();
+  } catch (e) {
+    $("avisoCamara").textContent = "No se pudo usar la cámara. Revisá que el navegador tenga permiso de cámara para esta página y recargá.";
+    estadoCam("Sin cámara", "mal");
+  }
+  abrirSala();
+}
+
+// ---- sala (conexión directa con los monitores)
+function nuevoCodigo() { let c = ""; for (let i = 0; i < 6; i++) c += LETRAS[Math.floor(Math.random() * LETRAS.length)]; return c; }
+function abrirSala() {
+  let codigo = leer("sala", null) || nuevoCodigo();
+  guardar("sala", codigo);
+  $("txtSala").textContent = codigo;
+  $("inEnlace").value = `${location.origin}${location.pathname}?sala=${codigo}`;
+  peerCam = new Peer(PREFIJO + codigo);
+  peerCam.on("open", () => actualizarSala());
+  peerCam.on("disconnected", () => { $("textoSala").textContent = "Reconectando…"; setTimeout(() => peerCam.reconnect(), 2000); });
+  peerCam.on("error", e => {
+    if (e.type === "unavailable-id") { guardar("sala", null); peerCam.destroy(); abrirSala(); return; }
+    $("textoSala").textContent = "Problema de conexión: " + e.type; $("puntoSala").className = "punto mal";
+  });
+  peerCam.on("connection", conn => {
+    conn.on("open", () => {
+      monitores.set(conn.peer, conn);
+      conn.send({tipo: "historial", lista: resultados.slice(0, 50), config});
+      if (streamCam) peerCam.call(conn.peer, streamCam);
+      actualizarSala();
+    });
+    conn.on("close", () => { monitores.delete(conn.peer); actualizarSala(); });
+    conn.on("error", () => { monitores.delete(conn.peer); actualizarSala(); });
+  });
+}
+function actualizarSala() {
+  const n = monitores.size;
+  $("textoSala").textContent = n ? `${n} monitor${n > 1 ? "es" : ""} conectado${n > 1 ? "s" : ""}` : "Sala abierta, esperando monitor";
+  $("puntoSala").className = "punto " + (n ? "ok" : "trabajando");
+}
+function enviarAMonitores(msg) { for (const c of monitores.values()) if (c.open) c.send(msg); }
+$("btnCopiar").onclick = () => {
+  navigator.clipboard?.writeText($("inEnlace").value).then(() => { $("btnCopiar").textContent = "Copiado ✓"; setTimeout(() => $("btnCopiar").textContent = "Copiar", 1500); })
+    .catch(() => $("inEnlace").select());
+};
+
+// ---- detección de piezas
+const chico = document.createElement("canvas"); chico.width = 80; chico.height = 60;
+const ctxChico = chico.getContext("2d", {willReadFrequently: true});
+const grande = document.createElement("canvas");
+function grises() {
+  ctxChico.drawImage($("video"), 0, 0, 80, 60);
+  const d = ctxChico.getImageData(0, 0, 80, 60).data, g = new Float32Array(4800);
+  for (let i = 0; i < 4800; i++) g[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11;
+  return g;
+}
+function diferencia(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 28) n++; return n / a.length * 100; }
+
+async function bucleDeteccion() {
+  while (true) {
+    await espera(250);
+    if (!$("video").videoWidth) continue;
+    const g = grises();
+    if (auto && !escaneando) detectar(g);
+    cuadroAnterior = g;
+  }
+}
+function detectar(g) {
+  const movimiento = cuadroAnterior ? diferencia(g, cuadroAnterior) : 100;
+  cuadrosQuietos = movimiento < 1.5 ? cuadrosQuietos + 1 : 0;
+  const hayPieza = fondo ? diferencia(g, fondo) > 1.2 : true;
+  if (!hayPieza) { piezaYaEscaneada = false; cuadrosConPieza = 0; return; }
+  if (!fondo && movimiento > 3) piezaYaEscaneada = false;
+  cuadrosConPieza++;
+  if (!piezaYaEscaneada && (cuadrosQuietos >= 2 || (fondo && cuadrosConPieza >= 2))) { piezaYaEscaneada = true; escanear(); }
+}
+function foto() {
+  const v = $("video");
+  grande.width = v.videoWidth; grande.height = v.videoHeight;
+  grande.getContext("2d").drawImage(v, 0, 0);
+  return new Promise(r => grande.toBlob(r, "image/jpeg", 0.85));
+}
+async function escanear() {
+  if (escaneando) return;
+  if (!$("video").videoWidth) { estadoCam("La cámara todavía no está lista", "mal"); return; }
+  escaneando = true;
+  estadoCam("Reconociendo pieza…", "trabajando");
+  enviarAMonitores({tipo: "estado", texto: "Reconociendo pieza…"});
+  try {
+    const form = new FormData();
+    form.append("query_image", await foto(), "pieza.jpg");
+    const r = await fetch(API_BRICKOGNIZE, {method: "POST", body: form});
+    if (!r.ok) throw new Error("Brickognize respondió " + r.status);
+    const datos = await r.json();
+    const item = datos.items?.[0];
+    let res = {hora: new Date().toISOString()};
+    if (item) {
+      res = {...res, id: item.id, nombre: item.name, categoria: item.category || "", img: item.img_url, score: item.score, color: datos.colors?.[0]?.name || ""};
+      res.caja = cajaPara(res);
+    }
+    resultados.unshift(res); resultados = resultados.slice(0, 300); guardar("resultadosCam", resultados);
+    pintarUltimo($("panelUltimoCam"), res);
+    if (!monitores.size) decir(fraseDe(res)); // si no hay monitor, habla la cámara
+    enviarAMonitores({tipo: "resultado", resultado: res});
+    estadoCam(item ? (auto ? "Listo. Mirando la cinta…" : "Listo") : "No se reconoció", item ? "ok" : "mal");
+  } catch (e) {
+    estadoCam("Error: " + e.message + ". ¿Hay internet?", "mal");
+  } finally { escaneando = false; }
+}
+$("btnEscanear").onclick = () => escanear();
+$("btnAuto").onclick = () => {
+  auto = !auto; piezaYaEscaneada = !fondo;
+  $("btnAuto").textContent = "Automático: " + (auto ? "prendido" : "apagado");
+  $("btnAuto").classList.toggle("activo", auto);
+  estadoCam(auto ? "Mirando la cinta…" : "Cámara lista", "ok");
+};
+$("btnFondo").onclick = () => {
+  if (!cuadroAnterior) return;
+  fondo = cuadroAnterior; piezaYaEscaneada = false;
+  $("btnFondo").textContent = "Fondo tomado ✓";
+  setTimeout(() => $("btnFondo").textContent = "Tomar fondo vacío", 2000);
+};
+
+// ---- editor de cajas
+function filaCaja(texto = "", caja = 1) {
+  const f = document.createElement("div"); f.className = "fila";
+  const t = document.createElement("input"); t.type = "text"; t.value = texto; t.placeholder = "Texto (ej: Plate)";
+  const c = document.createElement("input"); c.type = "number"; c.min = "0"; c.value = caja;
+  const x = document.createElement("button"); x.textContent = "✕"; x.setAttribute("aria-label", "Quitar regla"); x.onclick = () => f.remove();
+  f.append(t, "→ caja", c, x); $("filasCajas").append(f);
+}
+function pintarCajas() {
+  $("filasCajas").innerHTML = "";
+  config.cajas.forEach(c => filaCaja(c.texto, c.caja));
+  $("inOtros").value = config.caja_otros;
+}
+$("btnAgregarFila").onclick = () => filaCaja();
+$("btnGuardarCajas").onclick = () => {
+  const cajas = [...$("filasCajas").children].map(f => {
+    const [t, c] = f.querySelectorAll("input");
+    return {texto: t.value.trim(), caja: parseInt(c.value) || 0};
+  }).filter(c => c.texto);
+  config = {cajas, caja_otros: parseInt($("inOtros").value) || 0};
+  guardar("config", config);
+  enviarAMonitores({tipo: "config", config});
+  $("btnGuardarCajas").textContent = "Guardado ✓";
+  setTimeout(() => $("btnGuardarCajas").textContent = "Guardar", 1500);
+};
+
+// ================================================================ MONITOR
+let peerMon = null, connMon = null, salaMon = null;
+function estadoMon(texto, tipo = "") { $("textoMon").textContent = texto; $("puntoMon").className = "punto " + tipo; }
+
+function iniciarMonitor(codigo) {
+  mostrarModo("monitor");
+  crearUltimo($("panelUltimoMon"));
+  resultados = leer("resultadosMon", []);
+  pintarMonitor();
+  codigo = codigo || leer("salaMon", "");
+  if (codigo) { $("inSala").value = codigo; conectar(codigo); }
+}
+$("btnConectar").onclick = () => {
+  const c = $("inSala").value.trim().toUpperCase();
+  if (c.length !== 6) { estadoMon("El código tiene 6 letras o números", "mal"); return; }
+  decir(""); // habilita la voz con este toque (los navegadores la piden después de un clic)
+  conectar(c);
+};
+$("inSala").addEventListener("keydown", e => { if (e.key === "Enter") $("btnConectar").click(); });
+
+function conectar(codigo) {
+  salaMon = codigo; guardar("salaMon", codigo);
+  estadoMon("Conectando con la sala " + codigo + "…", "trabajando");
+  if (!peerMon || peerMon.destroyed) {
+    peerMon = new Peer();
+    peerMon.on("call", call => {
+      call.answer();
+      call.on("stream", s => { $("videoRemoto").srcObject = s; $("videoRemoto").play().catch(() => {}); $("avisoRemoto").hidden = true; });
+      call.on("close", () => { $("avisoRemoto").hidden = false; });
+    });
+    peerMon.on("error", e => {
+      if (e.type === "peer-unavailable") estadoMon(`No encuentro la cámara ${salaMon}. ¿Está abierta en modo Cámara? Reintento…`, "mal");
+      else estadoMon("Problema de conexión (" + e.type + "). Reintento…", "mal");
+      setTimeout(() => conectar(salaMon), 4000);
+    });
+    peerMon.on("disconnected", () => setTimeout(() => peerMon.reconnect(), 2000));
+    peerMon.on("open", () => abrirConexion());
+  } else if (peerMon.open) abrirConexion();
+}
+function abrirConexion() {
+  if (connMon?.open) connMon.close();
+  connMon = peerMon.connect(PREFIJO + salaMon, {reliable: true});
+  connMon.on("open", () => { estadoMon("Conectado a la cámara " + salaMon, "ok"); });
+  connMon.on("data", recibir);
+  connMon.on("close", () => {
+    estadoMon("Se cortó la conexión. Reintento…", "mal"); $("avisoRemoto").hidden = false;
+    setTimeout(() => conectar(salaMon), 3000);
+  });
+}
+function recibir(msg) {
+  if (msg.tipo === "historial") { config = msg.config || config; resultados = msg.lista || []; guardar("resultadosMon", resultados); pintarMonitor(); }
+  else if (msg.tipo === "resultado") { resultados.unshift(msg.resultado); resultados = resultados.slice(0, 300); guardar("resultadosMon", resultados); pintarMonitor(); decir(fraseDe(msg.resultado)); }
+  else if (msg.tipo === "config") { config = msg.config; pintarMonitor(); }
+  else if (msg.tipo === "estado") estadoMon(msg.texto, "trabajando");
+  if (msg.tipo === "resultado") estadoMon("Conectado a la cámara " + salaMon, "ok");
+}
+function pintarMonitor() {
+  pintarUltimo($("panelUltimoMon"), resultados[0]);
+  const tb = $("tablaHist"); tb.innerHTML = "";
+  for (const r of resultados.slice(0, 60)) {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); if (r.img) { const im = document.createElement("img"); im.src = r.img; im.alt = ""; a.append(im); }
+    const b = document.createElement("td"); b.textContent = r.id ? `${r.nombre} (${r.id})` : "No reconocida";
+    const c = document.createElement("td"); c.textContent = r.color || "";
+    const d = document.createElement("td"); const k = document.createElement("span"); k.className = "cajita"; k.textContent = r.id ? r.caja : "?"; d.append(k);
+    tr.append(a, b, c, d); tb.append(tr);
+  }
+  const cuenta = {};
+  for (const r of resultados) if (r.id) cuenta[r.caja] = (cuenta[r.caja] || 0) + 1;
+  const cajas = [...new Set([...config.cajas.map(c => c.caja), config.caja_otros, ...Object.keys(cuenta).map(Number)])].sort((a, b) => a - b);
+  $("conteo").innerHTML = "";
+  for (const c of cajas) {
+    const nombres = config.cajas.filter(x => x.caja === c).map(x => x.texto).join(", ") || "otras";
+    const el = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = cuenta[c] || 0;
+    const s = document.createElement("span"); s.textContent = `Caja ${c} · ${nombres}`;
+    el.append(b, s); $("conteo").append(el);
+  }
+}
+$("btnBorrar").onclick = () => { $("confirmarBorrar").hidden = false; };
+$("btnNoBorrar").onclick = () => { $("confirmarBorrar").hidden = true; };
+$("btnSiBorrar").onclick = () => { resultados = []; guardar("resultadosMon", []); pintarMonitor(); $("confirmarBorrar").hidden = true; };
+
+// ================================================================ arranque
+(() => {
+  const sala = new URLSearchParams(location.search).get("sala");
+  if (sala) { guardar("modo", "monitor"); iniciarMonitor(sala.toUpperCase()); return; }
+  const modo = leer("modo", null);
+  if (modo === "camara") iniciarCamara();
+  else if (modo === "monitor") iniciarMonitor();
+  else mostrarModo("inicio");
+})();
+</script>
+</body>
+</html>
