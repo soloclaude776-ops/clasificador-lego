@@ -40,7 +40,7 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;p
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
 .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .vista{position:relative;background:#000;border-radius:9px;overflow:hidden;aspect-ratio:4/3;max-width:100%}
-.vista video{width:100%;height:100%;object-fit:contain;display:block}
+.vista video,.vista img{width:100%;height:100%;object-fit:contain;display:block}
 .vista .aviso{position:absolute;inset:0;display:grid;place-items:center;color:#fff;text-align:center;padding:20px;background:rgba(0,0,0,.65)}
 .estado{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:14px}
 .punto{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
@@ -148,7 +148,7 @@ th{color:var(--muted);font-weight:600}
     </section>
     <section class="panel">
       <h2>En vivo</h2>
-      <div class="vista"><video id="videoRemoto" playsinline muted autoplay></video><div class="aviso" id="avisoRemoto">Sin video todavía</div></div>
+      <div class="vista"><img id="videoRemoto" alt="Imagen de la cámara"><div class="aviso" id="avisoRemoto">Sin imagen todavía</div></div>
     </section>
     <section class="panel">
       <h2>Piezas por caja</h2>
@@ -173,11 +173,14 @@ th{color:var(--muted);font-weight:600}
   </div>
 </template>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 const API_BRICKOGNIZE = "https://api.brickognize.com/predict/parts/?predict_color=true&top_k_items=3";
 const UMBRAL_DUDOSA = 0.5;
-const PREFIJO = "clasificador-lego-";
+// Sala en línea: servidores MQTT públicos y gratuitos. Se usan los tres a la vez,
+// así si uno se cae la sala sigue funcionando por los otros.
+const SERVIDORES = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt", "wss://test.mosquitto.org:8081"];
+const TEMA = sala => `clasificador-lego/v2/${sala}/`;
 const LETRAS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CAJAS_POR_DEFECTO = [
   {texto: "Technic", caja: 5}, {texto: "Minifig", caja: 6}, {texto: "Slope", caja: 4},
@@ -251,8 +254,8 @@ $("elegirMonitor").onclick = () => { guardar("modo", "monitor"); iniciarMonitor(
 // ================================================================ CÁMARA
 let auto = false, escaneando = false, fondo = null, cuadroAnterior = null;
 let cuadrosQuietos = 0, piezaYaEscaneada = false, cuadrosConPieza = 0;
-let streamCam = null, peerCam = null;
-const monitores = new Map(); // conexiones de datos abiertas
+let streamCam = null, sala = null;
+const monitores = new Map(); // monitor → última vez que avisó que está mirando
 
 function estadoCam(texto, tipo = "") { $("textoCam").textContent = texto; $("puntoCam").className = "punto " + tipo; }
 
@@ -276,8 +279,6 @@ async function iniciarCamara() {
     $("avisoCamara").hidden = true;
     estadoCam("Cámara lista", "ok");
     mantenerPantallaPrendida();
-    // monitores que se conectaron antes de que la cámara estuviera lista
-    for (const id of monitores.keys()) peerCam?.call(id, streamCam);
     bucleDeteccion();
   } catch (e) {
     $("avisoCamara").textContent = "No se pudo usar la cámara. Revisá que el navegador tenga permiso de cámara para esta página y recargá.";
@@ -288,67 +289,76 @@ async function mantenerPantallaPrendida() {
   try { await navigator.wakeLock?.request("screen"); } catch (e) {}
 }
 
-// ---- sala (conexión directa con los monitores)
+// ---- sala en línea (servidores MQTT públicos, los tres a la vez)
 function nuevoCodigo() { let c = ""; for (let i = 0; i < 6; i++) c += LETRAS[Math.floor(Math.random() * LETRAS.length)]; return c; }
-let intentosMismoCodigo = 0;
+function crearSala(codigo, op) {
+  const base = TEMA(codigo);
+  const clientes = SERVIDORES.map((url, i) => {
+    const c = mqtt.connect(url, {
+      reconnectPeriod: 4000, connectTimeout: 10000, keepalive: 30,
+      will: op.despedida ? {topic: base + op.despedida.tema, payload: op.despedida.dato, retain: true, qos: 0} : undefined,
+    });
+    const aqui = (tema, dato, retener = false) => c.publish(base + tema, empaquetar(dato), {qos: 0, retain: retener});
+    c.on("connect", () => { c.subscribe(op.temas.map(t => base + t)); op.alConectar?.(aqui); cambio(); });
+    c.on("close", cambio); c.on("offline", cambio); c.on("error", () => {});
+    c.on("message", (t, p) => op.alMensaje?.(t.slice(base.length), p, i));
+    return c;
+  });
+  function cambio() { op.alCambio?.(clientes.filter(c => c.connected).length); }
+  return {
+    publicar(tema, dato, retener = false) {
+      const p = empaquetar(dato);
+      for (const c of clientes) if (c.connected) c.publish(base + tema, p, {qos: 0, retain: retener});
+    },
+    cerrar() { for (const c of clientes) c.end(true); },
+  };
+}
+const empaquetar = d => (d instanceof Uint8Array || typeof d === "string") ? d : JSON.stringify(d);
+
+let servidoresCam = 0;
 function abrirSala() {
-  let codigo = leer("sala", null) || nuevoCodigo();
+  const codigo = leer("sala", null) || nuevoCodigo();
   guardar("sala", codigo);
   $("txtSala").textContent = codigo;
   $("inEnlace").value = `${location.origin}${location.pathname}?sala=${codigo}`;
-  const peer = peerCam = new Peer(PREFIJO + codigo);
-  peer.on("open", () => { intentosMismoCodigo = 0; actualizarSala(); });
-  peer.on("disconnected", () => {
-    if (peer !== peerCam || peer.destroyed) return;
-    $("textoSala").textContent = "Reconectando…"; $("puntoSala").className = "punto trabajando";
-    setTimeout(() => { if (!peer.destroyed) peer.reconnect(); }, 2000);
+  actualizarSala();
+  sala = crearSala(codigo, {
+    temas: ["ping"],
+    despedida: {tema: "camara", dato: "off"},   // si la cámara se corta, el servidor avisa solo
+    alConectar: aqui => { aqui("camara", "on", true); aqui("historial", historialParaMonitores(), true); },
+    alMensaje: (tema, p) => { if (tema === "ping") { monitores.set(p.toString(), Date.now()); actualizarSala(); } },
+    alCambio: n => { servidoresCam = n; actualizarSala(); },
   });
-  peer.on("error", e => {
-    if (peer !== peerCam) return;
-    if (e.type === "unavailable-id") {
-      // Si el celular cortó la página de golpe, el servidor tarda en liberar el código.
-      // Se reintenta con el MISMO código un rato, así el monitor no queda buscando uno viejo.
-      peer.destroy();
-      if (++intentosMismoCodigo > 12) { guardar("sala", null); intentosMismoCodigo = 0; abrirSala(); return; }
-      $("textoSala").textContent = "Recuperando la sala…"; $("puntoSala").className = "punto trabajando";
-      setTimeout(abrirSala, 5000);
-      return;
-    }
-    if (e.type === "peer-unavailable") return; // un monitor que ya no está
-    $("textoSala").textContent = "Problema de conexión (" + e.type + "). Reintento…"; $("puntoSala").className = "punto mal";
-    if (["network", "server-error", "socket-error", "socket-closed"].includes(e.type)) {
-      peer.destroy(); setTimeout(abrirSala, 4000);
-    }
-  });
-  peer.on("connection", conn => {
-    conn.on("open", () => {
-      monitores.set(conn.peer, conn);
-      conn.send({tipo: "historial", lista: resultados.slice(0, 50), config});
-      if (streamCam) peer.call(conn.peer, streamCam);
-      actualizarSala();
-    });
-    conn.on("close", () => { monitores.delete(conn.peer); actualizarSala(); });
-    conn.on("error", () => { monitores.delete(conn.peer); actualizarSala(); });
-  });
+  setInterval(actualizarSala, 5000);
 }
-// Al volver a la página (pantalla apagada, otra app): pantalla prendida y sala reconectada
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  if ($("modoCamara").hidden === false && peerCam) {
-    mantenerPantallaPrendida();
-    if (peerCam.destroyed) abrirSala();
-    else if (peerCam.disconnected) peerCam.reconnect();
-  }
-  if ($("modoMonitor").hidden === false && salaMon && !connMon?.open) {
-    clearTimeout(reintento); reintento = null; conectar(salaMon);
-  }
-});
+function monitoresActivos() {
+  const ahora = Date.now();
+  for (const [id, visto] of monitores) if (ahora - visto > 15000) monitores.delete(id);
+  return monitores.size;
+}
 function actualizarSala() {
-  const n = monitores.size;
-  $("textoSala").textContent = n ? `${n} monitor${n > 1 ? "es" : ""} conectado${n > 1 ? "s" : ""}` : "Sala abierta, esperando monitor";
+  if (!servidoresCam) { $("textoSala").textContent = "Conectando con la sala en línea…"; $("puntoSala").className = "punto trabajando"; return; }
+  const n = monitoresActivos();
+  $("textoSala").textContent = n ? `Sala en línea · ${n} monitor${n > 1 ? "es" : ""} conectado${n > 1 ? "s" : ""}` : "Sala en línea abierta, esperando monitor";
   $("puntoSala").className = "punto " + (n ? "ok" : "trabajando");
 }
-function enviarAMonitores(msg) { for (const c of monitores.values()) if (c.open) c.send(msg); }
+function enviarAMonitores(tema, dato, retener = false) { sala?.publicar(tema, dato, retener); }
+const historialParaMonitores = () => ({lista: resultados.slice(0, 50), config});
+// imagen en vivo para el monitor: una foto chica por segundo, solo si hay alguien mirando
+const mini = document.createElement("canvas");
+let ultimoEnvio = 0;
+async function enviarCuadro() {
+  const v = $("video");
+  if (!v.videoWidth || !monitoresActivos() || Date.now() - ultimoEnvio < 1000) return;
+  ultimoEnvio = Date.now();
+  mini.width = 360; mini.height = Math.round(360 * v.videoHeight / v.videoWidth);
+  mini.getContext("2d").drawImage(v, 0, 0, mini.width, mini.height);
+  const blob = await new Promise(r => mini.toBlob(r, "image/jpeg", 0.6));
+  if (blob) enviarAMonitores("video", new Uint8Array(await blob.arrayBuffer()));
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !$("modoCamara").hidden) mantenerPantallaPrendida();
+});
 $("btnCopiar").onclick = () => {
   navigator.clipboard?.writeText($("inEnlace").value).then(() => { $("btnCopiar").textContent = "Copiado ✓"; setTimeout(() => $("btnCopiar").textContent = "Copiar", 1500); })
     .catch(() => $("inEnlace").select());
@@ -372,6 +382,7 @@ async function bucleDeteccion() {
     if (!$("video").videoWidth) continue;
     const g = grises();
     if (auto && !escaneando) detectar(g);
+    enviarCuadro();
     cuadroAnterior = g;
   }
 }
@@ -395,7 +406,7 @@ async function escanear() {
   if (!$("video").videoWidth) { estadoCam("La cámara todavía no está lista", "mal"); return; }
   escaneando = true;
   estadoCam("Reconociendo pieza…", "trabajando");
-  enviarAMonitores({tipo: "estado", texto: "Reconociendo pieza…"});
+  enviarAMonitores("estado", "Reconociendo pieza…");
   try {
     const form = new FormData();
     form.append("query_image", await foto(), "pieza.jpg");
@@ -410,8 +421,9 @@ async function escanear() {
     }
     resultados.unshift(res); resultados = resultados.slice(0, 300); guardar("resultadosCam", resultados);
     pintarUltimo($("panelUltimoCam"), res);
-    if (!monitores.size) decir(fraseDe(res)); // si no hay monitor, habla la cámara
-    enviarAMonitores({tipo: "resultado", resultado: res});
+    if (!monitoresActivos()) decir(fraseDe(res)); // si no hay monitor, habla la cámara
+    enviarAMonitores("resultado", res);
+    enviarAMonitores("historial", historialParaMonitores(), true);
     estadoCam(item ? (auto ? "Listo. Mirando la cinta…" : "Listo") : "No se reconoció", item ? "ok" : "mal");
   } catch (e) {
     estadoCam("Error: " + e.message + ". ¿Hay internet?", "mal");
@@ -452,13 +464,13 @@ $("btnGuardarCajas").onclick = () => {
   }).filter(c => c.texto);
   config = {cajas, caja_otros: parseInt($("inOtros").value) || 0};
   guardar("config", config);
-  enviarAMonitores({tipo: "config", config});
+  enviarAMonitores("historial", historialParaMonitores(), true);
   $("btnGuardarCajas").textContent = "Guardado ✓";
   setTimeout(() => $("btnGuardarCajas").textContent = "Guardar", 1500);
 };
 
 // ================================================================ MONITOR
-let peerMon = null, connMon = null, salaMon = null;
+let salaMon = null;
 function estadoMon(texto, tipo = "") { $("textoMon").textContent = texto; $("puntoMon").className = "punto " + tipo; }
 
 function iniciarMonitor(codigo) {
@@ -473,26 +485,14 @@ $("btnConectar").onclick = () => {
   const c = $("inSala").value.trim().toUpperCase();
   if (c.length !== 6) { estadoMon("El código tiene 6 letras o números", "mal"); return; }
   decir(""); // habilita la voz con este toque (los navegadores la piden después de un clic)
-  clearTimeout(reintento); reintento = null; fallos = 0;
   conectar(c);
 };
 $("inSala").addEventListener("keydown", e => { if (e.key === "Enter") $("btnConectar").click(); });
 
-// Reintentos: como mucho uno agendado a la vez y sin rendirse nunca
-// (la cámara puede abrirse minutos después que el monitor)
-let reintento = null, fallos = 0, intento = 0;
-function programarReintento(ms) {
-  if (reintento) return;
-  fallos++;
-  if (fallos >= 4) {
-    estadoMon(`Sigo buscando la cámara ${salaMon}… Si en el celular aparece otro código, escribilo arriba y tocá Conectar.`, "mal");
-  }
-  reintento = setTimeout(() => { reintento = null; conectar(salaMon); }, fallos >= 4 ? 6000 : ms);
-}
-function sinVideo(texto) {
-  $("avisoRemoto").textContent = texto; $("avisoRemoto").hidden = false;
-  $("videoRemoto").srcObject = null;
-}
+let conexionMon = null, servidoresMon = 0, ultimoCuadro = 0;
+const camaraEn = {};                 // estado de la cámara según cada servidor
+const dichos = new Set();            // resultados ya anunciados por voz
+const miId = Math.random().toString(36).slice(2, 10);
 
 function conectar(codigo) {
   if (codigo !== salaMon) {
@@ -500,42 +500,62 @@ function conectar(codigo) {
     if (codigo !== leer("salaMon", "")) { resultados = []; guardar("resultadosMon", []); pintarMonitor(); }
     salaMon = codigo; guardar("salaMon", codigo);
   }
-  estadoMon("Conectando con la sala " + codigo + "…", "trabajando");
-  if (!peerMon || peerMon.destroyed) {
-    peerMon = new Peer();
-    peerMon.on("call", call => {
-      call.answer();
-      call.on("stream", s => { $("videoRemoto").srcObject = s; $("videoRemoto").play().catch(() => {}); $("avisoRemoto").hidden = true; });
-      call.on("close", () => sinVideo("Se cortó el video"));
-    });
-    peerMon.on("error", e => {
-      if (e.type === "peer-unavailable") estadoMon(`No encuentro la cámara ${salaMon}. ¿Está abierta en modo Cámara? Reintento…`, "mal");
-      else estadoMon("Problema de conexión (" + e.type + "). Reintento…", "mal");
-      programarReintento(4000);
-    });
-    peerMon.on("disconnected", () => { if (!peerMon.destroyed) setTimeout(() => peerMon.reconnect(), 2000); });
-    peerMon.on("open", () => abrirConexion());
-  } else if (peerMon.open) abrirConexion();
-}
-function abrirConexion() {
-  const este = ++intento; // las conexiones viejas ya no tocan la pantalla
-  if (connMon) connMon.close();
-  const conn = connMon = peerMon.connect(PREFIJO + salaMon, {reliable: true});
-  conn.on("open", () => { if (este !== intento) return; fallos = 0; estadoMon("Conectado a la cámara " + salaMon, "ok"); });
-  conn.on("data", m => { if (este === intento) recibir(m); });
-  conn.on("close", () => {
-    if (este !== intento) return;
-    sinVideo("Se cortó la conexión con la cámara");
-    estadoMon("Se cortó la conexión. Reintento…", "mal");
-    programarReintento(3000);
+  conexionMon?.cerrar();
+  for (const k in camaraEn) delete camaraEn[k];
+  servidoresMon = 0;
+  estadoMon("Entrando a la sala " + codigo + "…", "trabajando");
+  conexionMon = crearSala(codigo, {
+    temas: ["camara", "historial", "resultado", "estado", "video"],
+    alConectar: aqui => aqui("ping", miId),
+    alMensaje: recibir,
+    alCambio: n => { servidoresMon = n; pintarEstadoMon(); },
   });
 }
-function recibir(msg) {
-  if (msg.tipo === "historial") { config = msg.config || config; resultados = msg.lista || []; guardar("resultadosMon", resultados); pintarMonitor(); }
-  else if (msg.tipo === "resultado") { resultados.unshift(msg.resultado); resultados = resultados.slice(0, 300); guardar("resultadosMon", resultados); pintarMonitor(); decir(fraseDe(msg.resultado)); }
-  else if (msg.tipo === "config") { config = msg.config; pintarMonitor(); }
-  else if (msg.tipo === "estado") estadoMon(msg.texto, "trabajando");
-  if (msg.tipo === "resultado") estadoMon("Conectado a la cámara " + salaMon, "ok");
+setInterval(() => conexionMon?.publicar("ping", miId), 5000);   // "estoy mirando"
+const camaraPrendida = () => Object.values(camaraEn).includes("on");
+function pintarEstadoMon() {
+  if (!salaMon) return;
+  if (!servidoresMon) estadoMon("Sin conexión con la sala. ¿Hay internet? Reintentando…", "mal");
+  else if (camaraPrendida()) estadoMon("Conectado a la cámara " + salaMon, "ok");
+  else estadoMon(`Ya estás en la sala ${salaMon}. Esperando que se abra la cámara…`, "trabajando");
+}
+function recibir(tema, p, servidor) {
+  if (tema === "video") {
+    const ahora = Date.now();
+    if (ahora - ultimoCuadro < 400) return;   // la misma foto llega por varios servidores
+    ultimoCuadro = ahora;
+    const img = $("videoRemoto"), viejo = img.src;
+    img.src = URL.createObjectURL(new Blob([p], {type: "image/jpeg"}));
+    if (viejo.startsWith("blob:")) URL.revokeObjectURL(viejo);
+    $("avisoRemoto").hidden = true;
+    return;
+  }
+  const texto = p.toString();
+  if (tema === "camara") {
+    camaraEn[servidor] = texto;
+    if (!camaraPrendida()) { $("avisoRemoto").textContent = "La cámara está cerrada"; $("avisoRemoto").hidden = false; }
+    pintarEstadoMon();
+  } else if (tema === "historial") {
+    try {
+      const h = JSON.parse(texto);
+      if (h.config) config = h.config;
+      const lista = h.lista || [];
+      if ((lista[0]?.hora || "") >= (resultados[0]?.hora || "")) {
+        lista.forEach(r => dichos.add(r.hora));   // lo que ya estaba no se vuelve a anunciar
+        resultados = lista; guardar("resultadosMon", resultados);
+      }
+      pintarMonitor();
+    } catch (e) {}
+  } else if (tema === "resultado") {
+    let r; try { r = JSON.parse(texto); } catch (e) { return; }
+    if (!resultados.some(x => x.hora === r.hora)) {
+      resultados.unshift(r); resultados = resultados.slice(0, 300); guardar("resultadosMon", resultados); pintarMonitor();
+    }
+    if (!dichos.has(r.hora)) { dichos.add(r.hora); decir(fraseDe(r)); }
+    pintarEstadoMon();
+  } else if (tema === "estado") {
+    estadoMon(texto, "trabajando");
+  }
 }
 function pintarMonitor() {
   pintarUltimo($("panelUltimoMon"), resultados[0]);
