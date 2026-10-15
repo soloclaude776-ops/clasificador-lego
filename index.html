@@ -370,6 +370,7 @@ const ANCHO_G = 120, ALTO_G = 90;
 const QUIETO = 0.6;           // % de puntos que pueden cambiar entre cuadros y seguir contando como quieto
 const CAMBIO_ESCENA = 0.35;   // % de puntos distintos para considerar que hay algo nuevo
 const CUADROS_QUIETOS = 3;    // cuadros quietos seguidos (~0,75 s) antes de escanear
+const MOVIMIENTO_MANO = 2.0;  // % de puntos que cambian de un cuadro a otro cuando pasa una mano
 const chico = document.createElement("canvas"); chico.width = ANCHO_G; chico.height = ALTO_G;
 const ctxChico = chico.getContext("2d", {willReadFrequently: true});
 const grande = document.createElement("canvas");
@@ -392,14 +393,18 @@ async function bucleDeteccion() {
     cuadroAnterior = g;
   }
 }
+let huboMano = false;   // movimiento grande desde el último escaneo (alguien cambió la pieza)
 function detectar(g) {
   const movimiento = cuadroAnterior ? diferencia(g, cuadroAnterior) : 100;
   cuadrosQuietos = movimiento < QUIETO ? cuadrosQuietos + 1 : 0;
+  if (movimiento > MOVIMIENTO_MANO) huboMano = true;
   if (cuadrosQuietos < CUADROS_QUIETOS) {
     if (movimiento >= QUIETO) estadoCam("Hay movimiento… esperando que quede quieta", "trabajando");
     return;
   }
-  if (escenaVista && diferencia(g, escenaVista) < CAMBIO_ESCENA) return;   // nada nuevo
+  // escanea si pasó la mano (aunque la pieza nueva se parezca a la anterior) o si la imagen cambió sola (cinta)
+  if (!huboMano && escenaVista && diferencia(g, escenaVista) < CAMBIO_ESCENA) return;
+  huboMano = false;
   escenaVista = g;
   if (fondo && diferencia(g, fondo) < CAMBIO_ESCENA) {
     fondo = g;   // mesa vacía: se actualiza el fondo por si cambió la luz
@@ -447,7 +452,7 @@ $("btnAuto").onclick = () => {
   auto = !auto;
   if (auto && cuadroAnterior) {
     // al prender, lo que se ve ahora es la mesa vacía y no se escanea
-    fondo = cuadroAnterior; escenaVista = cuadroAnterior;
+    fondo = cuadroAnterior; escenaVista = cuadroAnterior; huboMano = false;
   }
   $("btnAuto").textContent = "Automático: " + (auto ? "prendido" : "apagado");
   $("btnAuto").classList.toggle("activo", auto);
@@ -455,7 +460,7 @@ $("btnAuto").onclick = () => {
 };
 $("btnFondo").onclick = () => {
   if (!cuadroAnterior) return;
-  fondo = cuadroAnterior; escenaVista = cuadroAnterior;
+  fondo = cuadroAnterior; escenaVista = cuadroAnterior; huboMano = false;
   $("btnFondo").textContent = "Fondo tomado ✓";
   setTimeout(() => $("btnFondo").textContent = "Tomar fondo vacío", 2000);
 };
