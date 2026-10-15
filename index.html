@@ -116,7 +116,7 @@ th{color:var(--muted);font-weight:600}
         <button id="btnAuto">Automático: apagado</button>
         <button id="btnFondo">Tomar fondo vacío</button>
       </div>
-      <p class="ayuda">Automático: escanea solo cuando aparece una pieza nueva. Primero tocá <b>Tomar fondo vacío</b> con la cinta sin piezas.</p>
+      <p class="ayuda"><b>Automático:</b> prendelo con la mesa (o la cinta) vacía. Cada vez que ponés una pieza y sacás la mano, la escanea sola. Para la siguiente, cambiala directamente. Si cambia la luz y empieza a fallar, sacá todo y tocá <b>Tomar fondo vacío</b>.</p>
     </section>
     <section class="panel">
       <h2>Conectar el monitor</h2>
@@ -252,8 +252,7 @@ $("elegirCamara").onclick = () => { guardar("modo", "camara"); iniciarCamara(); 
 $("elegirMonitor").onclick = () => { guardar("modo", "monitor"); iniciarMonitor(); };
 
 // ================================================================ CÁMARA
-let auto = false, escaneando = false, fondo = null, cuadroAnterior = null;
-let cuadrosQuietos = 0, piezaYaEscaneada = false, cuadrosConPieza = 0;
+let auto = false, escaneando = false, fondo = null, cuadroAnterior = null, cuadrosQuietos = 0;
 let streamCam = null, sala = null;
 const monitores = new Map(); // monitor → última vez que avisó que está mirando
 
@@ -364,17 +363,24 @@ $("btnCopiar").onclick = () => {
     .catch(() => $("inEnlace").select());
 };
 
-// ---- detección de piezas
-const chico = document.createElement("canvas"); chico.width = 80; chico.height = 60;
+// ---- detección automática de piezas
+// Regla: cuando la imagen se queda quieta y es distinta de la última escena vista, escanea.
+// Así funciona al cambiar una pieza por otra con la mano, sin que la mesa quede vacía en el medio.
+const ANCHO_G = 120, ALTO_G = 90;
+const QUIETO = 0.6;           // % de puntos que pueden cambiar entre cuadros y seguir contando como quieto
+const CAMBIO_ESCENA = 0.35;   // % de puntos distintos para considerar que hay algo nuevo
+const CUADROS_QUIETOS = 3;    // cuadros quietos seguidos (~0,75 s) antes de escanear
+const chico = document.createElement("canvas"); chico.width = ANCHO_G; chico.height = ALTO_G;
 const ctxChico = chico.getContext("2d", {willReadFrequently: true});
 const grande = document.createElement("canvas");
+let escenaVista = null;
 function grises() {
-  ctxChico.drawImage($("video"), 0, 0, 80, 60);
-  const d = ctxChico.getImageData(0, 0, 80, 60).data, g = new Float32Array(4800);
-  for (let i = 0; i < 4800; i++) g[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11;
+  ctxChico.drawImage($("video"), 0, 0, ANCHO_G, ALTO_G);
+  const d = ctxChico.getImageData(0, 0, ANCHO_G, ALTO_G).data, g = new Float32Array(ANCHO_G * ALTO_G);
+  for (let i = 0; i < g.length; i++) g[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11;
   return g;
 }
-function diferencia(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 28) n++; return n / a.length * 100; }
+function diferencia(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 22) n++; return n / a.length * 100; }
 
 async function bucleDeteccion() {
   while (true) {
@@ -388,12 +394,19 @@ async function bucleDeteccion() {
 }
 function detectar(g) {
   const movimiento = cuadroAnterior ? diferencia(g, cuadroAnterior) : 100;
-  cuadrosQuietos = movimiento < 1.5 ? cuadrosQuietos + 1 : 0;
-  const hayPieza = fondo ? diferencia(g, fondo) > 1.2 : true;
-  if (!hayPieza) { piezaYaEscaneada = false; cuadrosConPieza = 0; return; }
-  if (!fondo && movimiento > 3) piezaYaEscaneada = false;
-  cuadrosConPieza++;
-  if (!piezaYaEscaneada && (cuadrosQuietos >= 2 || (fondo && cuadrosConPieza >= 2))) { piezaYaEscaneada = true; escanear(); }
+  cuadrosQuietos = movimiento < QUIETO ? cuadrosQuietos + 1 : 0;
+  if (cuadrosQuietos < CUADROS_QUIETOS) {
+    if (movimiento >= QUIETO) estadoCam("Hay movimiento… esperando que quede quieta", "trabajando");
+    return;
+  }
+  if (escenaVista && diferencia(g, escenaVista) < CAMBIO_ESCENA) return;   // nada nuevo
+  escenaVista = g;
+  if (fondo && diferencia(g, fondo) < CAMBIO_ESCENA) {
+    fondo = g;   // mesa vacía: se actualiza el fondo por si cambió la luz
+    estadoCam("Mesa vacía. Poné una pieza", "ok");
+    return;
+  }
+  escanear();
 }
 function foto() {
   const v = $("video");
@@ -431,14 +444,18 @@ async function escanear() {
 }
 $("btnEscanear").onclick = () => escanear();
 $("btnAuto").onclick = () => {
-  auto = !auto; piezaYaEscaneada = !fondo;
+  auto = !auto;
+  if (auto && cuadroAnterior) {
+    // al prender, lo que se ve ahora es la mesa vacía y no se escanea
+    fondo = cuadroAnterior; escenaVista = cuadroAnterior;
+  }
   $("btnAuto").textContent = "Automático: " + (auto ? "prendido" : "apagado");
   $("btnAuto").classList.toggle("activo", auto);
-  estadoCam(auto ? "Mirando la cinta…" : "Cámara lista", "ok");
+  estadoCam(auto ? "Mesa vacía. Poné una pieza" : "Cámara lista", "ok");
 };
 $("btnFondo").onclick = () => {
   if (!cuadroAnterior) return;
-  fondo = cuadroAnterior; piezaYaEscaneada = false;
+  fondo = cuadroAnterior; escenaVista = cuadroAnterior;
   $("btnFondo").textContent = "Fondo tomado ✓";
   setTimeout(() => $("btnFondo").textContent = "Tomar fondo vacío", 2000);
 };
