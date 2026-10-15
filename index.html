@@ -371,6 +371,7 @@ const QUIETO = 0.6;           // % de puntos que pueden cambiar entre cuadros y 
 const CAMBIO_ESCENA = 0.35;   // % de puntos distintos para considerar que hay algo nuevo
 const CUADROS_QUIETOS = 3;    // cuadros quietos seguidos (~0,75 s) antes de escanear
 const MOVIMIENTO_MANO = 2.0;  // % de puntos que cambian de un cuadro a otro cuando pasa una mano
+const UMBRAL_VACIA = 0.06;    // % distinto del fondo para que cuente como pieza (un 1x1 lejos ocupa ~0,1 %)
 const chico = document.createElement("canvas"); chico.width = ANCHO_G; chico.height = ALTO_G;
 const ctxChico = chico.getContext("2d", {willReadFrequently: true});
 const grande = document.createElement("canvas");
@@ -406,7 +407,7 @@ function detectar(g) {
   if (!huboMano && escenaVista && diferencia(g, escenaVista) < CAMBIO_ESCENA) return;
   huboMano = false;
   escenaVista = g;
-  if (fondo && diferencia(g, fondo) < CAMBIO_ESCENA) {
+  if (fondo && diferencia(g, fondo) < UMBRAL_VACIA) {
     fondo = g;   // mesa vacía: se actualiza el fondo por si cambió la luz
     estadoCam("Mesa vacía. Poné una pieza", "ok");
     return;
