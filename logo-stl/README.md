@@ -24,6 +24,18 @@ de 256 × 256 mm (X1, P1, A1, H2D). Los cortes están alineados con bordes verti
 
 Ajustes sugeridos: PLA, capa 0,2 mm, 3–4 paredes, 15 % de relleno, sin soportes, apoyada con la cara blanca lisa sobre la cama.
 
+## Tiempo y peso estimados
+PLA, capa 0,2 mm, 2 paredes, 15 % de relleno, velocidades tipo X1/P1. Lo calculé con otro slicer (PrusaSlicer configurado como una Bambu), así que puede variar un poco respecto de Bambu Studio.
+
+| Pieza | Tiempo | Peso |
+|---|---|---|
+| 1 | ~1 h 32 min | ~58 g |
+| 2 | ~1 h 38 min | ~58 g |
+| 3 | ~1 h 17 min | ~44 g |
+| **Total** | **~4 h 30 min** | **~160 g** (~120 g blanco + ~40 g negro) |
+
+Con AMS sumá ~5 min y ~5–10 g de purga por pieza (hay un solo cambio de color por pieza). En la A1, que es más lenta, puede tardar entre un 20 y un 30 % más.
+
 ## Armado
 Encastrá las colas de milano (entran de arriba hacia abajo) y poné una gota de pegamento (CA / gotita) en la unión.
 Para colgarlo: cinta doble faz o adhesivo de montaje en la parte de atrás.
