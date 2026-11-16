@@ -16,11 +16,14 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 SALIDA = os.path.join(AQUI, "stl")
 
 # ---------------- Parámetros (mm) ----------------
+COLOR_FONDO = "negro"    # placa de atrás
+COLOR_LOGO = "blanco"    # letras / logo en relieve
+HEX = {"negro": "#111111", "blanco": "#f4f4f4"}
 ANCHO_TOTAL = 500.0      # ancho del cartel (fondo blanco) = 50 cm
 MARGEN = 15.0            # borde blanco alrededor del logo
 RADIO_ESQUINA = 8.0      # esquinas redondeadas del fondo
-ESPESOR_FONDO = 5.0      # placa blanca
-ALTO_LOGO = 2.0          # relieve negro sobre la placa
+ESPESOR_FONDO = 5.0      # placa de fondo
+ALTO_LOGO = 2.0          # relieve del logo sobre la placa
 # Cortes alineados con bordes verticales del logo para que la unión casi no se vea.
 # Piezas: ~186 / ~190 / ~144 mm (con la cola) -> entran en X1/P1/A1 (256x256) y H2D.
 CORTES = [176.2, 355.8]
@@ -128,8 +131,8 @@ def main():
             if m is not None:
                 m.apply_translation((dx, dy, 0))
         tag = f"pieza_{n + 1}"
-        base.export(os.path.join(SALIDA, f"{tag}_fondo_blanco.stl"))
-        relieve.export(os.path.join(SALIDA, f"{tag}_logo_negro.stl"))
+        base.export(os.path.join(SALIDA, f"{tag}_fondo_{COLOR_FONDO}.stl"))
+        relieve.export(os.path.join(SALIDA, f"{tag}_logo_{COLOR_LOGO}.stl"))
         # versión en un solo cuerpo (para cambio de filamento por altura)
         uno = trimesh.boolean.union([base, relieve], engine="manifold")
         uno.export(os.path.join(SALIDA, f"{tag}_completa.stl"))
@@ -151,13 +154,13 @@ def dibujar_vista(vista, path):
     fig, axs = plt.subplots(2, 1, figsize=(16, 7), dpi=110)
     for ax, sep in ((axs[0], 0.0), (axs[1], 18.0)):
         for i, (f, l) in enumerate(vista):
-            for g, fc in ((f, "#f4f4f4"), (l, "#111111")):
+            for g, fc in ((f, HEX[COLOR_FONDO]), (l, HEX[COLOR_LOGO])):
                 for p in (g.geoms if isinstance(g, MultiPolygon) else [g]):
                     x, y = p.exterior.xy
                     ax.fill([v + i * sep for v in x], y, fc=fc, ec="#999", lw=0.5)
                     for h in p.interiors:
                         hx, hy = h.xy
-                        ax.fill([v + i * sep for v in hx], hy, fc="#f4f4f4", ec="#999", lw=0.5)
+                        ax.fill([v + i * sep for v in hx], hy, fc=HEX[COLOR_FONDO], ec="#999", lw=0.5)
         ax.set_aspect("equal"); ax.axis("off")
     axs[0].set_title("Armado (50 cm)"); axs[1].set_title("Piezas separadas - encastre cola de milano")
     plt.tight_layout(); plt.savefig(path)
